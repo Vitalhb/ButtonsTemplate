@@ -18,9 +18,9 @@ enum ButtonIds : uint8_t {	Button1, Button2 };
 
 const uint8_t buttonPins[] = { BUTTON1_PIN, BUTTON2_PIN };
 
-template class Buttons<NUMBEROFBUTTONS>; // use like this: Buttons<NUMBEROFBUTTONS>::begin(buttonPins);
+template class Buttons&#60;NUMBEROFBUTTONS&#62;; // use like this: Buttons&#60;NUMBEROFBUTTONS&#62;::begin(buttonPins);
 OR
-using buttons = Buttons<NUMBEROFBUTTONS>; // use like this: buttons::begin(buttonPins);
+using buttons = Buttons&#60;NUMBEROFBUTTONS&#62;; // use like this: buttons::begin(buttonPins);
 ...
 
 ## Library Setup
