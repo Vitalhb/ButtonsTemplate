@@ -113,9 +113,19 @@ public:
 	 * @return                  true if the button has been clicked since the Change Flag
 	 *                          was last cleared, false otherwise.
 	 */
-	static inline bool clicked(uint8_t buttonId, bool clearChangeFlag = true)
+	static inline bool clicked(uint8_t buttonId, bool clearChangeFlag)
 	{
 		return changed(buttonId, clearChangeFlag) && down(buttonId);
+	}
+	// Clears the change flag only if the button is clicked
+	static bool clicked(uint8_t buttonId)
+	{
+		bool bChanged = changed(buttonId);
+		if (bChanged && down(buttonId))
+		{
+			clearChangedFlag(buttonId);
+		}
+		return bChanged;
 	}
 
 	/**
@@ -127,9 +137,19 @@ public:
 	* @return                  true if the button has been clicked since the Change Flag
 	*                          was last cleared, false otherwise.
 	*/
-	static inline bool released(uint8_t buttonId, bool clearChangeFlag = true)
+	static inline bool released(uint8_t buttonId, bool clearChangeFlag)
 	{
 		return changed(buttonId, clearChangeFlag) && !down(buttonId);
+	}
+	//Clears the change flag only if the button is released
+	static bool released(uint8_t buttonId)
+	{
+		bool bChanged = changed(buttonId);
+		if (changed(buttonId) && !down(buttonId))
+		{
+			clearChangedFlag(buttonId);
+		}
+		return bChanged;
 	}
 
 	/**
@@ -147,7 +167,7 @@ public:
 		return down(buttonId) && ((millis() - _buttonStatus[buttonId].lastChangeTime) > downTime);
 	}
 
-	static inline bool longClicked(uint8_t buttonId, uint16_t downTime, bool clearLongClickFlag = true)
+	static inline bool longClicked(uint8_t buttonId, uint16_t downTime, bool clearLongClickFlag)
 	{
 		if (delayedDown(buttonId, downTime))
 		{
@@ -199,7 +219,11 @@ public:
 	 * @param clearChangeFlag   If true, the Change Flag for this button will be cleared at the same time.
 	 * @return                  true if the button's state has changed.
 	 */
-	static bool changed(uint8_t buttonId, bool clearChangeFlag = true);
+	static bool changed(uint8_t buttonId, bool clearChangeFlag);
+	static inline bool changed(uint8_t buttonId)
+	{
+		return _buttonStatus[buttonId].changeFlag;
+	}
 
 	/**
 	 * This method clears all Change Flags for all buttons.
@@ -207,6 +231,11 @@ public:
 	 * button presses during the "non-interactive" phase do not trigger an unexpected action.
 	 */
 	static void clearAllChangeFlags();
+
+	static inline void clearChangedFlag(buttonId)
+	{
+		_buttonStatus[buttonId].changeFlag = false;
+	}
 
 	/**
 	 * Returns the number of buttons currently controlled by this class.
