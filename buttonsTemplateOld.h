@@ -22,55 +22,49 @@
  *  USA
  */
 
-#pragma once 
+#ifndef BUTTONS_TEMPLATE_H
+#define BUTTONS_TEMPLATE_H
+
 #include <Arduino.h>
 
-/**
-* Default periods in milliseconds.
-* Can be overridden in user files by #defining them before including this file.
-*/
-#ifndef BUTTON_DEBOUNCE_DELAY
-#define BUTTON_DEBOUNCE_DELAY 30
-#endif
-#ifndef DOUBLE_CLICK_DELAY
-#define DOUBLE_CLICK_DELAY 500
-#endif
-#ifndef LONG_RELEASE_DELAY
-#define LONG_RELEASE_DELAY 1000
-#endif
-
-/**
-* This structure encompasses information relating to an individual button.
-*/
+ /**
+ * This structure encompasses information relating to an individual button.
+ */
 struct Button
 {
 	/**
 	* Stores pin number of the button.
 	*/
-	uint8_t pin;
+	uint8_t buttonPin;
 
 	/**
 	* Stores the most recently measured state of the button.
+	* true = pushed, false = not pushed.
 	*/
-	uint8_t state;
+	bool currentState;
+
+	/**
+	* This flag indicates is set to true when currentState changes,
+	* and (optionally) set false when that state is read.
+	*/
+	bool changeFlag;
+	bool longClickFlag;
 
 	/**
 	* This records the last time that an Interrupt was triggered from this pin.
 	* Used as part of the debounce routine.
 	*/
-	unsigned long lastChangeTime, lastClickTime;
+	unsigned long lastChangeTime;
 
 	/**
 	* Constructor for objects of Button.
 	*/
 	Button() :
-		pin(0),
-		state(0),
-		//		currentState(false),
-		//		changeFlag(false),
-		//		longClickFlag(false),
-		lastChangeTime(0),
-		lastClickTime(0)
+		buttonPin(false),
+		currentState(false),
+		changeFlag(false),
+		longClickFlag(false),
+		lastChangeTime(0)
 	{
 	}
 };
@@ -86,7 +80,7 @@ struct Button
  * On the Arduino Due (for example) all digital pins can be used in this way, but on
  * the Arduino Uno, only pins 2 and 3 can have interrupts attached.
  */
-template <const uint8_t NumberOfButtons>
+template <uint8_t NumberOfButtons>
 class Buttons final
 {
 public:
@@ -98,7 +92,7 @@ public:
 	 * the button attached to the pin specified in buttonPins[3], you could call clicked(3, true).
 	 *
 	 * @param buttonPins        pointer to an array of uint8_t, each being the number of a
-	 *                          pin with a button attached that is to be managed by this object. The number of items in
+	 *                          pin with a button attached that is to be managed by this object. The number of items in 
 	 *									 the array must be the same as the "NumberOfButtons" used on the template instantiation.
 	 * @return                  true on success, false on failure.
 	 */
@@ -115,13 +109,23 @@ public:
 	 * defined as the button being down and the Change Flag set.
 	 *
 	 * @param buttonId          Index of the button whose status is to be checked.
-	 * @return                  true if the button has been clicked, false otherwise.
+	 * @param clearChangeFlag   If true, the Change Flag for this button will be cleared at the same time.
+	 * @return                  true if the button has been clicked since the Change Flag
+	 *                          was last cleared, false otherwise.
 	 */
-	static bool clicked(uint8_t buttonId) __attribute__((always_inline))
+	static inline bool clicked(uint8_t buttonId, bool clearChangeFlag)
 	{
-		uint8_t bClicked = _buttons[buttonId].state & CLICKED_FLAG;
-		_buttons[buttonId].state &= ~CLICKED_FLAG;
-		return bClicked != 0;
+		return changed(buttonId, clearChangeFlag) && down(buttonId);
+	}
+	// Clears the change flag only if the button is clicked
+	static bool clicked(uint8_t buttonId)
+	{
+		bool bChanged = changed(buttonId);
+		if (bChanged && down(buttonId))
+		{
+			clearChangedFlag(buttonId);
+		}
+		return bChanged;
 	}
 
 	/**
@@ -133,11 +137,19 @@ public:
 	* @return                  true if the button has been clicked since the Change Flag
 	*                          was last cleared, false otherwise.
 	*/
-	static bool shortReleased(uint8_t buttonId) __attribute__((always_inline))
+	static inline bool released(uint8_t buttonId, bool clearChangeFlag)
 	{
-		uint8_t bShortReleased = _buttons[buttonId].state & SHORT_RELEASED_FLAG;
-		_buttons[buttonId].state &= ~SHORT_RELEASED_FLAG;
-		return bShortReleased != 0;
+		return changed(buttonId, clearChangeFlag) && !down(buttonId);
+	}
+	//Clears the change flag only if the button is released
+	static bool released(uint8_t buttonId)
+	{
+		bool bChanged = changed(buttonId);
+		if (changed(buttonId) && !down(buttonId))
+		{
+			clearChangedFlag(buttonId);
+		}
+		return bChanged;
 	}
 
 	/**
@@ -150,18 +162,20 @@ public:
 	* @return                  true if the button has been clicked since the Change Flag
 	*                          was last cleared, false otherwise.
 	*/
-	static bool longReleased(uint8_t buttonId) __attribute__((always_inline))
+	static inline bool delayedDown(uint8_t buttonId, uint16_t downTime)
 	{
-		uint8_t blongReleased = _buttons[buttonId].state & LONG_RELEASED_FLAG;
-		_buttons[buttonId].state &= ~LONG_RELEASED_FLAG;
-		return blongReleased != 0;
+		return down(buttonId) && ((millis() - _buttonStatus[buttonId].lastChangeTime) > downTime);
 	}
 
-	static bool doubleClicked(uint8_t buttonId) __attribute__((always_inline))
+	static inline bool longClicked(uint8_t buttonId, uint16_t downTime, bool clearLongClickFlag)
 	{
-		uint8_t bDoubleClicked = _buttons[buttonId].state & DOUBLE_CLICKED_FLAG;
-		_buttons[buttonId].state &= ~DOUBLE_CLICKED_FLAG;
-		return bDoubleClicked != 0;
+		if (delayedDown(buttonId, downTime))
+		{
+			bool result = _buttonStatus[buttonId].longClickFlag;
+			_buttonStatus[buttonId].longClickFlag &= !clearLongClickFlag;
+			return result;
+		}
+		return false;
 	}
 
 	/**
@@ -174,10 +188,11 @@ public:
 	 * @param clearChangeFlag   If true, the Change Flag for this button will be cleared at the same time.
 	 * @return                  true if the button is down.
 	 */
-	static bool down(uint8_t buttonId) __attribute__((always_inline))
+	static inline bool down(uint8_t buttonId)
 	{
-		return (_buttons[buttonId].state & PRESSED_FLAG) != 0;
+		return  _buttonStatus[buttonId].currentState;
 	}
+
 
 	/**
 	 * Returns a bool value indicating if the button is currently "up"/"not pressed".
@@ -189,24 +204,52 @@ public:
 	 * @param clearChangeFlag   If true, the Change Flag for this button will be cleared at the same time.
 	 * @return                  true if the button is up.
 	 */
-	static bool up(uint8_t buttonId) __attribute__((always_inline))
+	static inline bool up(uint8_t buttonId)
 	{
 		return !down(buttonId);
 	}
 
-		/**
-		 * Returns the number of buttons currently controlled by this class.
-		 *
-		 * @return    The number of buttons controlled by this class
-		 */
-	static uint8_t numberOfButtons() __attribute__((always_inline))
+	/**
+	 * Returns a bool value indicating if the button's state has changed since the
+	 * Change Flag was last cleared.
+	 * This return value is independent of whether the button itself is up or down, it
+	 * need only have changed.
+	 *
+	 * @param buttonId          Index of the button whose status is to be checked.
+	 * @param clearChangeFlag   If true, the Change Flag for this button will be cleared at the same time.
+	 * @return                  true if the button's state has changed.
+	 */
+	static bool changed(uint8_t buttonId, bool clearChangeFlag);
+	static inline bool changed(uint8_t buttonId)
 	{
-		return NumberOfButtons;
+		return _buttonStatus[buttonId].changeFlag;
 	}
 
-	static bool polledDown(uint8_t buttonId) __attribute__((always_inline))
+	/**
+	 * This method clears all Change Flags for all buttons.
+	 * Useful to call when entering or leaving a user-interaction context so that spurious
+	 * button presses during the "non-interactive" phase do not trigger an unexpected action.
+	 */
+	static void clearAllChangeFlags();
+
+	static inline void clearChangedFlag(uint8_t buttonId)
 	{
-		return digitalRead(_buttons[buttonId].pin) == LOW;
+		_buttonStatus[buttonId].changeFlag = false;
+	}
+
+	/**
+	 * Returns the number of buttons currently controlled by this class.
+	 *
+	 * @return    The number of buttons controlled by this class
+	 */
+	static inline uint8_t numberOfButtons()
+	{
+		return (_begun) ? NumberOfButtons : 0;
+	}
+
+	static inline bool polledDown(uint8_t buttonId)
+	{
+		return digitalRead(_buttonStatus[buttonId].buttonPin) == LOW;
 	}
 
 	//This class has only static members, therefore constructors etc are pointless.
@@ -216,16 +259,15 @@ public:
 	Buttons(const Buttons&) = delete;
 
 private:
-	static constexpr uint8_t CLEAR_FLAGS = 0;
-	static constexpr uint8_t PRESSED_FLAG = _BV(0);
-	static constexpr uint8_t CLICKED_FLAG = _BV(1);
-	static constexpr uint8_t SHORT_RELEASED_FLAG = _BV(2);
-	static constexpr uint8_t LONG_RELEASED_FLAG = _BV(3);
-	static constexpr uint8_t DOUBLE_CLICKED_FLAG = _BV(4);
+
+	/**
+	* Debounce period in milliseconds.
+	*/
+	static constexpr unsigned long DEBOUNCE_DELAY = 50;
 
 	/**
 	* This function is called whenever a button interrupt is fired.
-	* It reads all the button states and updates their _buttons objects
+	* It reads all the button states and updates their _buttonStatus objects
 	* accordingly.
 	*/
 	static void button_ISR();
@@ -236,20 +278,20 @@ private:
 	* Its volatile because its members may be modified by an ISR, so we need to
 	* prevent register caching of member values.
 	*/
-	//	static volatile Button _buttons[NumberOfButtons];
-	static volatile Button _buttons[NumberOfButtons];
+	static volatile Button _buttonStatus[NumberOfButtons];
 
 	/**
 	* Set to true if this class has been initialised, false otherwise.
 	*/
 	static bool _begun;
+
 };
 
 template <uint8_t NumberOfButtons>
 bool Buttons<NumberOfButtons>::_begun = false;
 
 template <uint8_t NumberOfButtons>
-volatile Button Buttons<NumberOfButtons>::_buttons[NumberOfButtons];
+volatile Button Buttons<NumberOfButtons>::_buttonStatus[NumberOfButtons];
 
 template <uint8_t NumberOfButtons>
 bool Buttons<NumberOfButtons>::begin(const uint8_t buttonPins[])
@@ -263,7 +305,7 @@ bool Buttons<NumberOfButtons>::begin(const uint8_t buttonPins[])
 	// Set up the input pins themselves.
 	for (uint8_t i = 0; i < NumberOfButtons; i++)
 	{
-		_buttons[i].pin = buttonPins[i];
+		_buttonStatus[i].buttonPin = buttonPins[i];
 		pinMode(buttonPins[i], INPUT_PULLUP);
 	}
 
@@ -280,8 +322,10 @@ bool Buttons<NumberOfButtons>::begin(const uint8_t buttonPins[])
 	// initialize buttons state
 	for (uint8_t i = 0; i < NumberOfButtons; i++)
 	{
-		_buttons[i].state = digitalRead(_buttons[i].pin) ? CLEAR_FLAGS : PRESSED_FLAG;
-		_buttons[i].lastClickTime = _buttons[i].lastChangeTime = millis();
+		_buttonStatus[i].currentState = !digitalRead(_buttonStatus[i].buttonPin);
+		_buttonStatus[i].changeFlag = false;
+		_buttonStatus[i].longClickFlag = false;
+		_buttonStatus[i].lastChangeTime = millis();
 	}
 
 	// All done.
@@ -299,7 +343,7 @@ void Buttons<NumberOfButtons>::stop()
 	//Disable the interrupts
 	for (uint8_t i = 0; i < NumberOfButtons; i++)
 	{
-		detachInterrupt(digitalPinToInterrupt(_buttons[i].pin));
+		detachInterrupt(digitalPinToInterrupt(_buttonStatus[i].buttonPin));
 	}
 
 	//Object has been stopped.
@@ -309,38 +353,40 @@ void Buttons<NumberOfButtons>::stop()
 template <uint8_t NumberOfButtons>
 void Buttons<NumberOfButtons>::button_ISR()
 {
-	uint32_t now = millis();
 	for (uint8_t i = 0; i < NumberOfButtons; i++)
 	{
-		bool readState = polledDown(i);
-		bool buttonState = down(i);
-		if (readState != buttonState)
+		const bool readState = !digitalRead(_buttonStatus[i].buttonPin);
+		if (readState != _buttonStatus[i].currentState)
 		{
-			if (now - _buttons[i].lastChangeTime > BUTTON_DEBOUNCE_DELAY)
+			if (millis() > _buttonStatus[i].lastChangeTime + DEBOUNCE_DELAY)
 			{
-				if (readState) // button has been clicked
-				{
-					if (now - _buttons[i].lastClickTime > DOUBLE_CLICK_DELAY)
-					{
-						_buttons[i].state = PRESSED_FLAG | CLICKED_FLAG;
-					}
-					else
-					{
-						_buttons[i].state = PRESSED_FLAG | DOUBLE_CLICKED_FLAG;
-					}
-					_buttons[i].lastClickTime = now;
-				}
-				else
-				{ // button has been released
-					_buttons[i].state &= ~PRESSED_FLAG;
-					if (now - _buttons[i].lastClickTime > LONG_RELEASE_DELAY)
-						_buttons[i].state |= LONG_RELEASED_FLAG;
-					else
-						_buttons[i].state |= SHORT_RELEASED_FLAG;
-
-				}
+				_buttonStatus[i].currentState = readState;
+				_buttonStatus[i].changeFlag = true;
+				_buttonStatus[i].longClickFlag = true;
 			}
-			_buttons[i].lastChangeTime = now;
+			_buttonStatus[i].lastChangeTime = millis();
 		}
 	}
 }
+
+template <uint8_t NumberOfButtons>
+bool Buttons<NumberOfButtons>::changed(uint8_t buttonId, bool clearChangeFlag)
+{
+	//Save current changeFlag before optionally clearing it.
+	bool answer = _buttonStatus[buttonId].changeFlag;
+
+	_buttonStatus[buttonId].changeFlag &= !clearChangeFlag;
+
+	return answer;
+}
+
+template <uint8_t NumberOfButtons>
+void Buttons<NumberOfButtons>::clearAllChangeFlags()
+{
+	for (uint8_t i = 0; i < NumberOfButtons; i++)
+	{
+		_buttonStatus[i].changeFlag = false;
+	}
+}
+
+#endif //BUTTONS_TEMPLATE_H
